@@ -1,15 +1,11 @@
-import random
-
-from DQN import *
-from itertools import count
+from DDQN import *
 import time
-
 
 def get_state(obs):
     state = np.array(obs)
     state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
-    return state.unsqueeze(0) / 255.0
+    return state.unsqueeze(0)/255.0
 
 
 def test():
@@ -19,14 +15,14 @@ def test():
     env.seed(seed)
     env = wrap_deepmind(env, scale=False, frame_stack=True)
     dqn = DQN(in_channels=env.observation_space.shape[2], num_actions=env.action_space.n)
-    dqn.load_state_dict(torch.load('trained model/DQN_dict.pth.tar', map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('trained model/DDQN_dict.pth.tar'))
 
     obs = env.reset()
     state = get_state(obs)
     total_reward = 0.0
     while True:
 
-        action = dqn(state.to(torch.float32)).max(1)[1].view(1, 1)
+        action = dqn(state.to(torch.float32)).max(1)[1].view(1,1)
         if True:
             env.render()
             time.sleep(0.02)

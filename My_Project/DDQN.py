@@ -1,9 +1,4 @@
 import random, math
-
-import os
-
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -14,7 +9,7 @@ import torch.nn.functional as F
 import torch.autograd as autograd
 
 # Create and wrap the environment
-from atari_wrappers import make_atari, wrap_deepmind, LazyFrames
+from atari_wrappers import make_atari, wrap_deepmind
 from IPython.display import clear_output
 from tensorboardX import SummaryWriter
 
@@ -23,9 +18,8 @@ dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTens
 Variable = lambda *args, **kwargs: autograd.Variable(*args, **kwargs).cuda() if USE_CUDA else autograd.Variable(*args,
                                                                                                                 **kwargs)
 
-
-# env = make_atari('PongNoFrameskip-v4')  # only use in no frameskip environment
-# env = wrap_deepmind(env, scale=False, frame_stack=True)
+# env = make_atari('PongNoFrameskip-v4') # only use in no frameskip environment
+# env = wrap_deepmind(env, scale = False, frame_stack=True )
 # n_actions = env.action_space.n
 # state_dim = env.observation_space.shape
 #
@@ -34,10 +28,7 @@ Variable = lambda *args, **kwargs: autograd.Variable(*args, **kwargs).cuda() if 
 # for i in range(100):
 #     test = env.step(env.action_space.sample())[0]
 #
-# plt.imshow(test._force()[..., 0])
-
-
-# plt.imshow(env.render("rgb_array"))
+# plt.imshow(test._force()[...,0])
 
 """
     deep Q-learning network: in_channels: number of channel of input; 
@@ -59,12 +50,12 @@ class DQN(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
-        x = F.relu(self.fc4(x.reshape(x.size(0), -1)))
+        x = F.relu(self.fc4(x.contiguous().view(x.size(0), -1)))
         return self.fc5(x)
 
 
 class Memory_Buffer(object):
-    def __init__(self, memory_size=100000):
+    def __init__(self, memory_size=1000):
         self.buffer = []
         self.memory_size = memory_size
         self.next_idx = 0
@@ -95,7 +86,7 @@ class Memory_Buffer(object):
         return len(self.buffer)
 
 
-class DQNAgent:
+class DDQNAgent:
     def __init__(self, in_channels=1, action_space=[], USE_CUDA=False, memory_size=10000, epsilon=1, lr=1e-4):
         self.epsilon = epsilon
         self.action_space = action_space
@@ -110,7 +101,7 @@ class DQNAgent:
             self.DQN_target = self.DQN_target.cuda()
         self.optimizer = optim.RMSprop(self.DQN.parameters(), lr=lr, eps=0.001, alpha=0.95)
 
-    def observe(self, lazyframe):# from Lazy frame to tensor
+    def observe(self, lazyframe):  # from Lazy frame to tensor
 
         state = torch.from_numpy(lazyframe._force().transpose(2, 0, 1)[None] / 255).float()
         if self.USE_CUDA:
@@ -121,7 +112,7 @@ class DQNAgent:
         q_values = self.DQN(state)
         return q_values
 
-    def act(self, state, epsilon=None): # sample actions with epsilon-greedy policy
+    def act(self, state, epsilon=None):  # sample actions with epsilon-greedy policy
 
         if epsilon is None: epsilon = self.epsilon
 
@@ -150,10 +141,12 @@ class DQNAgent:
         predicted_qvalues_for_actions = predicted_qvalues[range(states.shape[0]), actions]
 
         # compute q-values
-        predicted_next_qvalues = self.DQN_target(next_states)
+        predicted_next_qvalues_current = self.DQN(next_states)
+        predicted_next_qvalues_target = self.DQN_target(next_states)
 
-        # compute V*(next_states) using predicted next q-values
-        next_state_values = predicted_next_qvalues.max(-1)[0]
+        # V*(next_states)
+        next_state_values = predicted_next_qvalues_target.gather(1, torch.max(predicted_next_qvalues_current, 1)[
+            1].unsqueeze(1)).squeeze(1)
 
         # "target q-values" for loss
         target_qvalues_for_actions = rewards + gamma * next_state_values
@@ -203,9 +196,9 @@ if __name__ == '__main__':
 
     gamma = 0.99
     epsilon_max = 1
-    epsilon_min = 0.05
+    epsilon_min = 0.01
     eps_decay = 30000
-    frames = 2000000
+    frames = 1000000
     USE_CUDA = True
     learning_rate = 2e-4
     max_buff = 100000
@@ -221,7 +214,7 @@ if __name__ == '__main__':
     action_dim = env.action_space.n
     state_dim = env.observation_space.shape[0]
     state_channel = env.observation_space.shape[2]
-    agent = DQNAgent(in_channels=state_channel, action_space=action_space, USE_CUDA=USE_CUDA, lr=learning_rate, memory_size=max_buff)
+    agent = DDQNAgent(in_channels=state_channel, action_space=action_space, USE_CUDA=USE_CUDA, lr=learning_rate)
 
     frame = env.reset()
 
@@ -230,11 +223,11 @@ if __name__ == '__main__':
     losses = []
     episode_num = 0
     is_win = False
-    summary_writer = SummaryWriter(log_dir="DQN_stackframe", comment="good_makeatari")
+    summary_writer = SummaryWriter(log_dir="DDQN", comment="good_makeatari")  # tensorboard
 
     # epsilon-greedy decay
     epsilon_by_frame = lambda frame_idx: epsilon_min + (epsilon_max - epsilon_min) * math.exp(
-        -1. * frame_idx / eps_decay)
+        -1. * frame_idx / eps_decay)  # e-greedy decay
     # plt.plot([epsilon_by_frame(i) for i in range(10000)])
 
     for i in range(frames):
@@ -272,7 +265,7 @@ if __name__ == '__main__':
             avg_reward = float(np.mean(all_rewards[-100:]))
 
     summary_writer.close()
-    torch.save(agent.DQN.state_dict(), "trained model/DQN_dict.pth.tar")
+    torch.save(agent.DQN.state_dict(), "trained model/DDQN_dict_2.pth.tar")
 
 
     def moving_average(a, n=3):
@@ -285,11 +278,11 @@ if __name__ == '__main__':
         clear_output(True)
         plt.figure(figsize=(20, 5))
         plt.subplot(131)
-        plt.title('frame %s. reward: %s' % (frame_idx, np.mean(rewards[-10:])))
-        plt.plot(rewards)
+        plt.title('frame %s. reward: %s' % (frame_idx, np.mean(rewards[-100:])))
+        plt.plot(moving_average(rewards, 20))
         plt.subplot(132)
-        plt.title('loss')
-        plt.plot(losses)
+        plt.title('loss, average on 100 stpes')
+        plt.plot(moving_average(losses, 100), linewidth=0.2)
         plt.show()
 
 
